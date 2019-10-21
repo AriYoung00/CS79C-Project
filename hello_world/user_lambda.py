@@ -27,14 +27,22 @@ dict containing success value, user id, user session token
 
 
 def create_user(email, passwd):
+    if not email or not passwd:
+        raise ValueError("Email or password not given")
+
     # Check if user email is already taken
-    resp = db.get_item(
+    resp = db.query(
         TableName=USERS_TABLE_NAME,
-        Key={
-            'email': {'S': email}
-        }
+        IndexName="email-index",
+        ExpressionAttributeValues={
+            ':v': {
+                'S': email
+            }
+        },
+        KeyConditionExpression='email = :v'
     )
-    if resp['items']:
+    items = resp.get('items')
+    if items:
         return {'success': False}
 
     # Hash user password using pbkdf2
@@ -50,11 +58,11 @@ def create_user(email, passwd):
     token_expire_time = str(datetime.datetime.now() + datetime.timedelta(days=7))
 
     db.put_item(TableName=USERS_TABLE_NAME, Item={
-        'uuid': user_id,
-        'email': email,
-        'pwd_hash': pwd_hash,
-        'session_secret': session_secret,
-        'expire_time': token_expire_time
+        'uuid': {"S": user_id},
+        'email': {"S": email},
+        'pwd_hash': {"S": pwd_hash},
+        'session_secret': {"S": session_secret},
+        'expire_time': {"S": token_expire_time}
     })
 
     return {
@@ -73,7 +81,7 @@ passwd: user password, required
 
 Returns
 ----------
-dict containing success value, uuid, session token
+dict containing success value, user_id, session token
 
 """
 
@@ -85,7 +93,7 @@ def login(email, passwd):
     resp = db.get_item(
         TableName=USERS_TABLE_NAME,
         Key={
-            'email': email
+            'email-index': email
         }
     )
     item = resp['Item']
@@ -119,11 +127,11 @@ def login(email, passwd):
     }
 
 
-def verify_session(uuid, token):
+def verify_session(user_id, token):
     resp = db.get_item(
         TableName=USERS_TABLE_NAME,
         Key={
-            'uuid': uuid
+            'uuid': user_id
         }
     )
     item = resp['Item']
@@ -135,35 +143,51 @@ def verify_session(uuid, token):
 
 
 def lambda_handler(event, context):
-    malformed = {
-        'statusCode': 400,
-        'body': "Malformed request"
-    }
-
     global db
     db = boto3.client("dynamodb")
     action = None
     method = None
+    email = None
+    passwd = None
+    body = None
+    output = None
+    invalid = {
+            'statusCode': 403,
+            'body': "Invalid protocol"
+    }
+
+    invalid2 = {
+            'statusCode': 403,
+            'body': "adfadsfasdf"
+    }
 
     try:
         action = event['pathParameters']['action'].split('/')
         method = event['httpMethod']
+        body = json.loads(event["body"])
+        email = body['email']
+        passwd = body["password"]
     except KeyError:
-        return malformed
+        return invalid
+
+
 
     if method != "POST":
-        return {
-            'statusCode': 403,
-            'body': "Invalid protocol"
-        }
+        return invalid
 
-    if action[0] == "add":
-        body = None
+    if action[0] == "create":
         try:
-            body = json.loads(event["body"])
-        except:
-            return malformed
+            output = create_user(email, passwd)
+        except ValueError:
+            return invalid
+    elif action[0] == "login":
+        try:
+            output = login(email, passwd)
+        except ValueError:
+            return invalid
 
-        try:
-            result
+    return {
+        'statusCode': 200,
+        'body': output
+    }
 
