@@ -128,18 +128,22 @@ def login(email, passwd):
 
 
 def verify_session(user_id, token):
-    resp = db.get_item(
+    resp = db.query(
         TableName=USERS_TABLE_NAME,
-        Key={
-            'user_id': user_id
-        }
+        IndexName="user_id-index",
+        ExpressionAttributeValues={
+            ':v': {
+                'S': user_id
+            }
+        },
+        KeyConditionExpression='user_id = :v'
     )
-    item = resp['Item']
+    items = resp.get('Items')
     # Fail if user does not exist
-    if not item:
+    if not items:
         return False
 
-    return pbkdf2_sha256.verify(item['session_secret'], token)
+    return pbkdf2_sha256.verify(items[0]['session_secret']['S'], token)
 
 
 def lambda_handler(event, context):
@@ -162,7 +166,7 @@ def lambda_handler(event, context):
         body = json.loads(event["body"])
         email = body['email']
         passwd = body["password"]
-    except KeyError:
+    except:
         return invalid
 
     if method != "POST":
@@ -178,9 +182,16 @@ def lambda_handler(event, context):
             output = login(email, passwd)
         except ValueError:
             return invalid
+    elif action[0] == "verify":
+        try:
+            output = verify_session(body['user_id'], body['token'])
+        except:
+            return invalid;
 
     return {
+        'isBase64Encoded': False,
+        'headers': {},
         'statusCode': 200,
-        'body': output
+        'body': json.dumps(output)
     }
 

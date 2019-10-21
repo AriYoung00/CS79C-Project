@@ -1,0 +1,8 @@
+{
+  "name": "CS79C-Project",
+  "version": "1.0.0",
+  "dependencies": {},
+  "devDependencies": {
+    "jquery": "^3.4.1"
+  }
+}
