@@ -90,19 +90,23 @@ def login(email, passwd):
     if not email or not passwd:
         raise ValueError("Email or password not given")
 
-    resp = db.get_item(
+    resp = db.query(
         TableName=USERS_TABLE_NAME,
-        Key={
-            'email-index': email
-        }
+        IndexName="email-index",
+        ExpressionAttributeValues={
+            ':v': {
+                'S': email
+            }
+        },
+        KeyConditionExpression='email = :v'
     )
-    item = resp['Item']
+    item = resp.get('Items')[0]
     # Fail if user does not exist
     if not item:
         return NO_SUCCESS
 
     # Fail if verification fails
-    if not pbkdf2_sha256.verify(passwd, item['pwd_hash']):
+    if not pbkdf2_sha256.verify(passwd, item['pwd_hash']["S"]):
         return NO_SUCCESS
 
     # Create new session secret, hash, expire time
@@ -110,15 +114,10 @@ def login(email, passwd):
     session_hash = pbkdf2_sha256.hash(session_secret)
     token_expire_time = str(datetime.datetime.now() + datetime.timedelta(days=7))
 
-    db.update_item(
-        TableName=USERS_TABLE_NAME,
-        Key=item,
-        UpdateExpression="set session_secret = :s, expire_time = :t",
-        ExpressionAttributeValues={
-            ':s': session_secret,
-            ':t': token_expire_time
-        }
-    )
+    item['session_secret']["S"] = session_secret
+    item['expire_time']['S'] = token_expire_time
+
+    db.put_item(TableName=USERS_TABLE_NAME, Item=item)
 
     return {
         'success': True,
@@ -157,41 +156,58 @@ def lambda_handler(event, context):
     output = None
     invalid = {
             'statusCode': 403,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
             'body': "Invalid protocol"
     }
+
 
     try:
         action = event['pathParameters']['action'].split('/')
         method = event['httpMethod']
         body = json.loads(event["body"])
-        email = body['email']
-        passwd = body["password"]
     except:
         return invalid
 
+    invalid2 = {
+        'statusCode': 403,
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+        },
+        'body': "ASDASDFADFADFS"
+    }
+
     if method != "POST":
-        return invalid
+        return invalid2
 
     if action[0] == "create":
         try:
-            output = create_user(email, passwd)
+            output = create_user(body['email'], body['password'])
         except ValueError:
             return invalid
     elif action[0] == "login":
         try:
-            output = login(email, passwd)
+            output = login(body['email'], body['password'])
         except ValueError:
             return invalid
     elif action[0] == "verify":
         try:
-            output = verify_session(body['user_id'], body['token'])
+            output = {"success": verify_session(body['user_id'], body['token'])}
         except:
-            return invalid;
+            return invalid2
+    else:
+        return invalid
 
     return {
         'isBase64Encoded': False,
-        'headers': {},
         'statusCode': 200,
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+        },
         'body': json.dumps(output)
     }
 
