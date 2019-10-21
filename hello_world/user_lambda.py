@@ -6,7 +6,7 @@ import datetime
 
 from passlib.hash import pbkdf2_sha256
 
-USERS_TABLE_NAME = "FinalProjUsers"
+USERS_TABLE_NAME = "FinalProjUser"
 POSTS_TABLE_NAME = "FinalProjPosts"
 NO_SUCCESS = {'success': False}
 
@@ -41,7 +41,7 @@ def create_user(email, passwd):
         },
         KeyConditionExpression='email = :v'
     )
-    items = resp.get('items')
+    items = resp.get('Items')
     if items:
         return {'success': False}
 
@@ -58,7 +58,7 @@ def create_user(email, passwd):
     token_expire_time = str(datetime.datetime.now() + datetime.timedelta(days=7))
 
     db.put_item(TableName=USERS_TABLE_NAME, Item={
-        'uuid': {"S": user_id},
+        'user_id': {"S": user_id},
         'email': {"S": email},
         'pwd_hash': {"S": pwd_hash},
         'session_secret': {"S": session_secret},
@@ -67,7 +67,7 @@ def create_user(email, passwd):
 
     return {
         'success': True,
-        'uuid': user_id,
+        'user_id': user_id,
         'token': session_hash
     }
 
@@ -122,7 +122,7 @@ def login(email, passwd):
 
     return {
         'success': True,
-        'uuid': item['uuid'],
+        'user_id': item['user_id'],
         'token': session_hash
     }
 
@@ -131,7 +131,7 @@ def verify_session(user_id, token):
     resp = db.get_item(
         TableName=USERS_TABLE_NAME,
         Key={
-            'uuid': user_id
+            'user_id': user_id
         }
     )
     item = resp['Item']
@@ -156,11 +156,6 @@ def lambda_handler(event, context):
             'body': "Invalid protocol"
     }
 
-    invalid2 = {
-            'statusCode': 403,
-            'body': "adfadsfasdf"
-    }
-
     try:
         action = event['pathParameters']['action'].split('/')
         method = event['httpMethod']
@@ -169,8 +164,6 @@ def lambda_handler(event, context):
         passwd = body["password"]
     except KeyError:
         return invalid
-
-
 
     if method != "POST":
         return invalid

@@ -1,10 +1,12 @@
 import json
 import boto3
 import uuid
+import random
 
 from passlib.hash import pbkdf2_sha256
+from boto3.dynamodb.conditions import Key, Attr
 
-USERS_TABLE_NAME = "FinalProjUsers"
+USERS_TABLE_NAME = "FinalProjUser"
 POSTS_TABLE_NAME = "FinalProjPosts"
 NO_SUCCESS = {'success': False}
 
@@ -12,18 +14,22 @@ db = None
 
 
 def verify_session(user_id, token):
-    resp = db.get_item(
+    resp = db.query(
         TableName=USERS_TABLE_NAME,
-        Key={
-            'uuid': user_id
-        }
+        IndexName="user_id-index",
+        ExpressionAttributeValues={
+            ':v': {
+                'S': user_id
+            }
+        },
+        KeyConditionExpression='user_id = :v'
     )
-    item = resp['Item']
+    items = resp.get('Items')
     # Fail if user does not exist
-    if not item:
+    if not items:
         return False
 
-    return pbkdf2_sha256.verify(item['session_secret'], token)
+    return pbkdf2_sha256.verify(items[0]['session_secret']['S'], token)
 
 
 def create_post(title, body_text, user_id):
@@ -31,15 +37,15 @@ def create_post(title, body_text, user_id):
         raise ValueError("Invalid arguments to create_post")
 
     # Not filtering for duplicate posts because that makes no sense to me
-    post_id = uuid.uuid1()
+    post_id = str(uuid.uuid1())
     db.put_item(
-        Table=POSTS_TABLE_NAME,
+        TableName=POSTS_TABLE_NAME,
         Item={
-            'post_id': post_id,
-            'title': title,
-            'body_text': body_text,
-            'users_uvote': [user_id],
-            'users_dvote': []
+            'upid': {"S": post_id},
+            'title': {"S": title},
+            'body_text': {"S": body_text},
+            'users_uvote': {"SS": [user_id, "phantom-user"]},
+            'users_dvote': {"SS": ["phantom-user"]} # Since dynamo does not allow empty string sets
         }
     )
 
@@ -78,6 +84,17 @@ def vote(user_id, upid, vote_type):
     return {'success': True}
 
 
+def get_post():
+    post = random.choice(db.scan(TableName=POSTS_TABLE_NAME)["Items"])
+    return {
+        'success': True,
+        'upid': post['upid']['S'],
+        'title': post['title']['S'],
+        'body': post['body_text']['S'],
+        'score': len(post['users_uvote']['SS']) - len(post['users_dvote']['SS'])
+    }
+
+
 def lambda_handler(event, context):
     global db
     db = boto3.client("dynamodb")
@@ -89,26 +106,15 @@ def lambda_handler(event, context):
         'statusCode': 403,
         'body': "Invalid protocol"
     }
-    invalid2 = {
-        'statusCode': 403,
-        'body': "ddfgsdfhrtj"
-    }
 
-    # try:
-    #     action = event['pathParameters']['action'].split('/')
-    #     method = event['httpMethod']
-    #     body = json.loads(event["body"])
-    #     user_id = body['uuid']
-    #     post_id = body['post_id']
-    #     token = body['token']
-    # except KeyError:
-    #     return invalid2
-
-    action = event['pathParameters']['action'].split('/')
-    method = event['httpMethod']
-    body = json.loads(event["body"])
-    user_id = body['uuid']
-    token = body['token']
+    try:
+        action = event['pathParameters']['action'].split('/')
+        method = event['httpMethod']
+        body = json.loads(event["body"])
+        user_id = body['user_id']
+        token = body['token']
+    except KeyError:
+        return invalid
 
     if method != "POST":
         return invalid
@@ -130,10 +136,14 @@ def lambda_handler(event, context):
         if "title" not in body or "body_text" not in body:
             return invalid
 
-        try:
-            output = create_post(body["title"], body["body_text"], body["uuid"])
-        except KeyError or ValueError:
-            return invalid
+        # try:
+        #     output = create_post(body["title"], body["body_text"], body["uuid"])
+        # except KeyError or ValueError:
+        #     return invalid
+
+        output = create_post(body["title"], body["body_text"], body["user_id"])
+    elif action[0] == "get":
+        output = get_post()
 
     return {
         'statusCode': 200,
