@@ -12,8 +12,6 @@ NO_SUCCESS = {'success': False}
 
 db = None
 
-
-
 """Function to create user in dynamo
 
 Parameters
@@ -26,6 +24,8 @@ Returns
 dict containing success value, user id, user session token
 
 """
+
+
 def create_user(email, passwd):
     # Check if user email is already taken
     resp = db.get_item(
@@ -76,7 +76,12 @@ Returns
 dict containing success value, uuid, session token
 
 """
+
+
 def login(email, passwd):
+    if not email or not passwd:
+        raise ValueError("Email or password not given")
+
     resp = db.get_item(
         TableName=USERS_TABLE_NAME,
         Key={
@@ -129,68 +134,36 @@ def verify_session(uuid, token):
     return pbkdf2_sha256.verify(item['session_secret'], token)
 
 
-def create_post(title, body_text, uuid, token):
-    if not verify_session(uuid, token):
-        return NO_SUCCESS
-
-    # Not filtering for duplicate posts because that makes no sense to me
-    upid = uuid.uuid1()
-    db.put_item(
-        Table=POSTS_TABLE_NAME,
-        Item={
-            'upid': upid,
-            'title': title,
-            'body_text': body_text,
-            'users_uvote': [uuid],
-            'users_dvote': []
-        }
-    )
-
-
-def upvote(uuid, upid, token, type):
-    if not verify_session(uuid, token):
-        return NO_SUCCESS
-
-    type1 = "users_upvote" if type else "users_downvote"
-    type2 = "users_downvote" if type else "users_upvote"
-
-
-    resp = db.get_item(
-        Table=POSTS_TABLE_NAME,
-        Key={
-            'upid': upid
-        }
-    )
-    item = resp['Item']
-    if not item:
-        return NO_SUCCESS
-
-    # Remove opposite vote, if it's there
-    if uuid in item[type2]:
-        item[type2].remove(uuid)
-    # If we've already cast a vote of this type, remove it
-    if uuid in item[type1]:
-        item[type1].remove(uuid)
-    # Else, cast a vote of this type
-    else:
-        item[type1].append(uuid)
-
-    # Just overwrite
-    db.put_item(Table=POSTS_TABLE_NAME, Item=item)
-
-
-
-
 def lambda_handler(event, context):
+    malformed = {
+        'statusCode': 400,
+        'body': "Malformed request"
+    }
+
     global db
     db = boto3.client("dynamodb")
+    action = None
+    method = None
 
-    path = event['path']
-    method = event['method']
+    try:
+        action = event['pathParameters']['action'].split('/')
+        method = event['httpMethod']
+    except KeyError:
+        return malformed
 
-    
+    if method != "POST":
+        return {
+            'statusCode': 403,
+            'body': "Invalid protocol"
+        }
 
-    return {
-        "statusCode": 200,
-        "body": json.dumps(event),
-    }
+    if action[0] == "add":
+        body = None
+        try:
+            body = json.loads(event["body"])
+        except:
+            return malformed
+
+        try:
+            result
+
